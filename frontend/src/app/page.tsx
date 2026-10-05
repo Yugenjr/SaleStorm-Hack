@@ -12,11 +12,11 @@ export default function Home() {
   const opacityHero = useTransform(scrollYProgress, [0, 0.2], [1, 0]);
 
   return (
-    <main className="min-h-screen bg-[#050505] text-white overflow-hidden font-sans">
+    <main className="min-h-screen bg-[#050505] text-white overflow-x-hidden font-sans">
       
       {/* 1. HERO SECTION */}
-      <section className="relative h-screen flex flex-col items-center justify-center border-b border-white/10">
-        <motion.div style={{ y: yHero, opacity: opacityHero }} className="z-10 text-center w-full max-w-7xl px-6">
+      <section className="relative min-h-screen pt-32 pb-20 flex flex-col items-center justify-start border-b border-white/10">
+        <motion.div style={{ y: yHero, opacity: opacityHero }} className="z-10 text-center w-full max-w-7xl px-6 mt-16">
           <h1 className="text-[12vw] leading-[0.85] font-black tracking-tighter mb-8 glitch-text" data-text="10,000 REQUESTS. 100 UNITS. 0 OVERSOLD.">
             10,000 REQUESTS.<br/>
             <span className="text-[#ff3366]">100 UNITS.</span><br/>
@@ -313,7 +313,10 @@ function LiveDemoSection() {
     }
   };
 
-  const [demoKey] = useState(`demo-${Math.random().toString(36).substr(2, 9)}`);
+  const [demoKey, setDemoKey] = useState<string>("");
+  useEffect(() => {
+    setDemoKey(`demo-${Math.random().toString(36).substr(2, 9)}`);
+  }, []);
 
   const makeReservation = async () => {
     setLoading(true); setError(false);
@@ -387,7 +390,7 @@ function SimulationSection() {
   const [successful, setSuccessful] = useState(0);
   const [rejected, setRejected] = useState(0);
 
-  const startSim = () => {
+  const startSim = async () => {
     if(running) return;
     setRunning(true);
     setInventory(100);
@@ -395,22 +398,42 @@ function SimulationSection() {
     setSuccessful(0);
     setRejected(0);
 
-    let count = 0;
-    const interval = setInterval(() => {
-      count += 200; // block sizes
-      if(count >= 10000) {
-        count = 10000;
-        clearInterval(interval);
-        setRunning(false);
+    let succ = 0;
+    
+    // We send them in 100 batches of 100 to avoid entirely freezing the browser
+    for(let b=0; b<100; b++) {
+      const batch = [];
+      for(let i=0; i<100; i++) {
+         const req = fetch(`${API_BASE}/api/reservations`, {
+           method: "POST",
+           headers: { "Content-Type": "application/json" },
+           body: JSON.stringify({
+             productId: "prod-100",
+             customerId: `demo-sim-${b}-${i}`,
+             quantity: 1,
+             idempotencyKey: `demo-sim-key-${b}-${i}-${Date.now()}`
+           })
+         }).then(res => {
+            if(res.status === 200 || res.status === 201) { 
+              setSuccessful(s => { const newS = s+1; succ = newS; return newS; }); 
+            }
+            else { setRejected(r => r+1); }
+         }).catch(e => {
+            setRejected(r => r+1);
+         });
+         batch.push(req);
       }
-      setRequests(count);
-      
-      const successCount = Math.min(100, Math.floor(count / 100)); // distribute successes
-      setSuccessful(successCount);
-      setInventory(100 - successCount);
-      setRejected(count - successCount);
+      setRequests((b+1)*100);
+      setInventory(100 - succ);
+      await Promise.allSettled(batch);
+    }
 
-    }, 30);
+    try {
+      const invRes = await fetch(`${API_BASE}/api/inventory/prod-100`).then(r => r.json());
+      setInventory(invRes.availableQuantity !== undefined ? invRes.availableQuantity : 0);
+    } catch(e) { }
+    
+    setRunning(false);
   };
 
   return (
