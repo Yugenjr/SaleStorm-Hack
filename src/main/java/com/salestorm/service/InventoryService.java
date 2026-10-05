@@ -50,4 +50,26 @@ public class InventoryService {
 
         return reservationRepository.save(reservation);
     }
+
+    @Transactional
+    public boolean releaseReservation(String reservationId) {
+        Optional<Reservation> optRes = reservationRepository.findById(reservationId);
+        if (optRes.isEmpty()) {
+            return false;
+        }
+        Reservation res = optRes.get();
+
+        // Atomically attempt to change state from RESERVED to RELEASED
+        int updated = reservationRepository.updateReservationStatusConditionally(
+                reservationId, ReservationStatus.RESERVED, ReservationStatus.RELEASED);
+
+        if (updated == 1) {
+            // We "won" the race. It's safe to restore inventory exactly once.
+            inventoryRepository.restoreInventory(res.getProductId(), res.getQuantity());
+            return true;
+        }
+
+        // It was already released, expired, or confirmed by another process
+        return false;
+    }
 }
