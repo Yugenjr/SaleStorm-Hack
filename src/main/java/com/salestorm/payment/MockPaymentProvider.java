@@ -1,6 +1,7 @@
 package com.salestorm.payment;
 
 import com.salestorm.domain.enums.PaymentStatus;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -8,6 +9,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
+@ConditionalOnProperty(name = "app.payment.provider", havingValue = "mock", matchIfMissing = true)
 public class MockPaymentProvider implements PaymentProvider {
 
     // Simple mock state to test reconciliation

@@ -49,7 +49,7 @@ public class ReservationLifecycleTest {
 
     @Test
     void testSuccessfulRelease() {
-        Reservation res = inventoryService.reserve(PRODUCT_ID, "cust-1", 1, UUID.randomUUID().toString());
+        Reservation res = inventoryService.reserve(PRODUCT_ID, UUID.randomUUID().toString(), 1, UUID.randomUUID().toString());
         
         Inventory invAfterReserve = inventoryRepository.findById(PRODUCT_ID).get();
         assertEquals(99, invAfterReserve.getAvailableQuantity());
@@ -65,7 +65,7 @@ public class ReservationLifecycleTest {
 
     @Test
     void testDuplicateRelease_OnlyRestoresInventoryOnce() {
-        Reservation res = inventoryService.reserve(PRODUCT_ID, "cust-1", 1, UUID.randomUUID().toString());
+        Reservation res = inventoryService.reserve(PRODUCT_ID, UUID.randomUUID().toString(), 1, UUID.randomUUID().toString());
         
         boolean releasedFirst = inventoryService.releaseReservation(res.getReservationId());
         assertTrue(releasedFirst);
@@ -79,7 +79,7 @@ public class ReservationLifecycleTest {
 
     @Test
     void testConcurrentReleaseAttempts_OnlyRestoresOnce() throws InterruptedException {
-        Reservation res = inventoryService.reserve(PRODUCT_ID, "cust-1", 1, UUID.randomUUID().toString());
+        Reservation res = inventoryService.reserve(PRODUCT_ID, UUID.randomUUID().toString(), 1, UUID.randomUUID().toString());
         String resId = res.getReservationId();
 
         int numThreads = 50;
@@ -110,7 +110,7 @@ public class ReservationLifecycleTest {
 
     @Test
     void testReservationExpiry() {
-        Reservation res = inventoryService.reserve(PRODUCT_ID, "cust-1", 1, UUID.randomUUID().toString());
+        Reservation res = inventoryService.reserve(PRODUCT_ID, UUID.randomUUID().toString(), 1, UUID.randomUUID().toString());
         
         // Artificially age the reservation
         res.setExpiresAt(LocalDateTime.now().minusMinutes(1));

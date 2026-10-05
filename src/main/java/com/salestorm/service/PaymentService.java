@@ -27,21 +27,27 @@ public class PaymentService {
     private final InventoryService inventoryService;
     private final PaymentProvider paymentProvider;
     private final EventPublisher eventPublisher;
+    private final MetricsService metricsService;
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(PaymentService.class);
 
     public PaymentService(PaymentRepository paymentRepository, 
                           ReservationRepository reservationRepository,
                           InventoryService inventoryService,
                           PaymentProvider paymentProvider, 
-                          EventPublisher eventPublisher) {
+                          EventPublisher eventPublisher,
+                          MetricsService metricsService) {
         this.paymentRepository = paymentRepository;
         this.reservationRepository = reservationRepository;
         this.inventoryService = inventoryService;
         this.paymentProvider = paymentProvider;
         this.eventPublisher = eventPublisher;
+        this.metricsService = metricsService;
     }
 
     @Transactional
     public Payment processPayment(String reservationId, String customerId, BigDecimal amount, String idempotencyKey) {
+        metricsService.recordPaymentAttempt();
+        log.info("Processing payment for reservation {}", reservationId);
         // 1. Idempotency Check (Read)
         Optional<Payment> existingPaymentOpt = paymentRepository.findByIdempotencyKey(idempotencyKey);
         if (existingPaymentOpt.isPresent()) {
@@ -107,11 +113,28 @@ public class PaymentService {
         return payment;
     }
 
+    @Transactional
+    public void reconcilePaymentWithWebhook(String paymentId, PaymentStatus newStatus) {
+        Payment payment = paymentRepository.findById(paymentId).orElseThrow();
+        if (payment.getStatus() != PaymentStatus.PENDING) {
+            return; // Already processed
+        }
+
+        if (newStatus == PaymentStatus.SUCCESS || newStatus == PaymentStatus.FAILED) {
+            payment.setStatus(newStatus);
+            payment.setUpdatedAt(LocalDateTime.now());
+            payment = paymentRepository.save(payment);
+            handlePaymentResult(payment);
+        }
+    }
+
     private void handlePaymentResult(Payment payment) {
         if (payment.getStatus() == PaymentStatus.SUCCESS) {
             // Confirm reservation
             int updated = reservationRepository.updateReservationStatusConditionally(payment.getReservationId(), ReservationStatus.PAYMENT_PENDING, ReservationStatus.CONFIRMED);
             if (updated == 1) {
+                metricsService.recordPaymentSuccess();
+                log.info("Payment succeeded for payment ID: {}", payment.getPaymentId());
                 publishEvent("PaymentSucceeded", payment);
             }
         } else if (payment.getStatus() == PaymentStatus.FAILED) {
@@ -119,6 +142,8 @@ public class PaymentService {
             int reverted = reservationRepository.updateReservationStatusConditionally(payment.getReservationId(), ReservationStatus.PAYMENT_PENDING, ReservationStatus.RESERVED);
             if (reverted == 1) {
                 inventoryService.releaseReservation(payment.getReservationId());
+                metricsService.recordPaymentFailure();
+                log.info("Payment failed for payment ID: {}", payment.getPaymentId());
                 publishEvent("PaymentFailed", payment);
             }
         }

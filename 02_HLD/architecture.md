@@ -28,20 +28,24 @@ flowchart TD
 ```
 ```
 
-## Runtime Infrastructure (Docker & PostgreSQL)
+## Runtime Infrastructure (Docker & PostgreSQL, Kafka, Redis)
 
 The system is deployed using containerization to ensure reproducibility and clean separation of concerns.
 
 ```mermaid
 graph TD;
-    Client-->SpringBootApp(Spring Boot Container);
+    Client-->REST[REST API / Controllers];
+    REST-->RL[Redis Rate Limiter];
+    RL-->SpringBootApp(Spring Boot Services);
+    SpringBootApp-->RedisCache(Redis Cache);
     SpringBootApp-->PostgreSQL(PostgreSQL Container);
 ```
 
+- **Redis Cache & Rate Limiter:** Protects the application from traffic spikes and offloads reads. It is **NOT** authoritative for inventory. If Redis goes down, the application elegantly degrades by routing reads and checks back to PostgreSQL.
 - **PostgreSQL Container:** The authoritative source of truth for all transactional state (Inventory, Reservations, Orders, Payments). State is persisted safely using external Docker volumes.
-- **Spring Boot Application Container:** Runs as a stateless, non-root Java 21 process. It is configured to wait for PostgreSQL health checks before booting.
+- **Spring Boot Application Container:** Runs as a stateless, non-root Java 21 process. It is configured to wait for PostgreSQL and Redis health checks before booting.
 - **Configuration:** All sensitive credentials and network routes are supplied dynamically via environment variables (`.env`).
-- **Testing:** The H2 in-memory database is deliberately retained and utilized by default during local Maven builds (`mvn test`) to ensure unit/integration tests remain lightning-fast and self-contained.
+- **Testing:** The H2 in-memory database and in-memory caches/events are deliberately retained and utilized by default during local Maven builds (`mvn test`).
 
 ## Service Boundaries & Responsibilities
 
@@ -53,7 +57,7 @@ graph TD;
 ## Communication Patterns
 
 - **Synchronous:** Checkout -> Inventory (User needs to know immediately if they got the reservation). Checkout -> Payment (User waits for payment status).
-- **Asynchronous (Event-Driven):** Payment -> Order (Once payment succeeds, an event `PaymentSucceeded` is published to the Message Broker. The Order Service consumes this).
+- **Asynchronous (Event-Driven via Kafka):** Payment -> Kafka -> Order. Once payment succeeds, a `PaymentSucceeded` event is published to Kafka (`sales.payment.events`). The Order Service consumes this reliably.
 - **Background (Scheduled):** Expiry Service runs in the background to sweep `RESERVED` items that have passed their `expiresAt` timestamp and releases them.
 
 ## Data Ownership & Consistency
@@ -69,3 +73,39 @@ graph TD;
 - **Payment Timeout:** Placed into a reconciliation queue to verify with the external gateway before taking final action.
 - **Order Service Down (Event Resilience):** We utilize an **At-Least-Once Delivery + Idempotent Consumer** architecture. When a payment succeeds, a `PaymentSucceeded` event is published. If the Order Service is unavailable or crashes during processing, the event is preserved in a retry queue / DLQ (simulated in-memory for the prototype, Kafka in production).
 - **Order Processing Idempotency:** The Order table enforces a unique constraint on the `paymentId`. If an event is re-delivered (due to retries or network duplicates), the Order Service intercepts the duplicate insert and safely ignores the redundant event, preventing duplicate orders.
+
+## Payment Provider Abstraction
+The system delegates payment processing to isolated provider implementations:
+```text
+PaymentService
+      ↓
+PaymentProvider
+      ├── MockPaymentProvider
+      └── RazorpayPaymentProvider
+                    ↓
+                 Razorpay
+```
+- **Mock Provider:** Used seamlessly for local tests and deterministic state verification.
+- **Razorpay Provider:** Creates live Razorpay orders.
+- **Webhook Reconciliation:** 
+```text
+Razorpay webhook
+      ↓
+signature verification
+      ↓
+idempotent state transition
+      ↓
+PaymentSucceeded / PaymentFailed
+      ↓
+Kafka
+```
+
+## Observability & Security
+
+Application
+    │
+    ├── Logs + Correlation ID (MDC)
+    ├── Actuator (/actuator/health)
+    └── Micrometer Metrics (Prometheus)
+
+All endpoints validate requests and hide stack traces. Webhooks strictly enforce signature validation.

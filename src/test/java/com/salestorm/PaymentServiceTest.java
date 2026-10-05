@@ -72,17 +72,18 @@ public class PaymentServiceTest {
         inventoryRepository.save(inventory);
     }
 
-    private Reservation createReservation() {
-        return inventoryService.reserve(PRODUCT_ID, "cust-1", 1, UUID.randomUUID().toString());
+    private Reservation createReservation(String customerId) {
+        return inventoryService.reserve(PRODUCT_ID, customerId, 1, UUID.randomUUID().toString());
     }
 
     @Test
     void testSuccessfulPayment() {
-        Reservation res = createReservation();
+        String customerId = UUID.randomUUID().toString();
+        Reservation res = createReservation(customerId);
         String idempotencyKey = UUID.randomUUID().toString();
         
         // 100.00 is treated as SUCCESS by MockPaymentProvider
-        Payment payment = paymentService.processPayment(res.getReservationId(), "cust-1", new BigDecimal("100.00"), idempotencyKey);
+        Payment payment = paymentService.processPayment(res.getReservationId(), customerId, new BigDecimal("100.00"), idempotencyKey);
         
         assertEquals(PaymentStatus.SUCCESS, payment.getStatus());
         
@@ -95,11 +96,12 @@ public class PaymentServiceTest {
 
     @Test
     void testFailedPayment() {
-        Reservation res = createReservation();
+        String customerId = UUID.randomUUID().toString();
+        Reservation res = createReservation(customerId);
         String idempotencyKey = UUID.randomUUID().toString();
         
         // 999.00 is treated as FAILED by MockPaymentProvider
-        Payment payment = paymentService.processPayment(res.getReservationId(), "cust-1", new BigDecimal("999.00"), idempotencyKey);
+        Payment payment = paymentService.processPayment(res.getReservationId(), customerId, new BigDecimal("999.00"), idempotencyKey);
         
         assertEquals(PaymentStatus.FAILED, payment.getStatus());
         
@@ -115,11 +117,12 @@ public class PaymentServiceTest {
 
     @Test
     void testPaymentTimeout() {
-        Reservation res = createReservation();
+        String customerId = UUID.randomUUID().toString();
+        Reservation res = createReservation(customerId);
         String idempotencyKey = UUID.randomUUID().toString();
         
         // 888.00 is treated as TIMEOUT by MockPaymentProvider
-        Payment payment = paymentService.processPayment(res.getReservationId(), "cust-1", new BigDecimal("888.00"), idempotencyKey);
+        Payment payment = paymentService.processPayment(res.getReservationId(), customerId, new BigDecimal("888.00"), idempotencyKey);
         
         assertEquals(PaymentStatus.PENDING, payment.getStatus(), "Payment should remain PENDING");
         
@@ -131,11 +134,12 @@ public class PaymentServiceTest {
 
     @Test
     void testDuplicatePaymentRequest() {
-        Reservation res = createReservation();
+        String customerId = UUID.randomUUID().toString();
+        Reservation res = createReservation(customerId);
         String idempotencyKey = UUID.randomUUID().toString();
         
-        Payment payment1 = paymentService.processPayment(res.getReservationId(), "cust-1", new BigDecimal("100.00"), idempotencyKey);
-        Payment payment2 = paymentService.processPayment(res.getReservationId(), "cust-1", new BigDecimal("100.00"), idempotencyKey);
+        Payment payment1 = paymentService.processPayment(res.getReservationId(), customerId, new BigDecimal("100.00"), idempotencyKey);
+        Payment payment2 = paymentService.processPayment(res.getReservationId(), customerId, new BigDecimal("100.00"), idempotencyKey);
         
         assertEquals(payment1.getPaymentId(), payment2.getPaymentId(), "Duplicate request should return the exact same payment record");
         assertEquals(1, paymentRepository.count());
@@ -143,7 +147,8 @@ public class PaymentServiceTest {
 
     @Test
     void testConcurrentDuplicatePaymentRequests() throws InterruptedException {
-        Reservation res = createReservation();
+        String customerId = UUID.randomUUID().toString();
+        Reservation res = createReservation(customerId);
         String idempotencyKey = UUID.randomUUID().toString();
         
         int numThreads = 10;
@@ -153,7 +158,7 @@ public class PaymentServiceTest {
         for (int i = 0; i < numThreads; i++) {
             executor.submit(() -> {
                 try {
-                    paymentService.processPayment(res.getReservationId(), "cust-1", new BigDecimal("100.00"), idempotencyKey);
+                    paymentService.processPayment(res.getReservationId(), customerId, new BigDecimal("100.00"), idempotencyKey);
                 } catch (Exception e) {
                     // Ignore exceptions for test, we just want to verify data integrity at the end
                 } finally {
@@ -170,11 +175,12 @@ public class PaymentServiceTest {
 
     @Test
     void testSuccessfulReconciliation() {
-        Reservation res = createReservation();
+        String customerId = UUID.randomUUID().toString();
+        Reservation res = createReservation(customerId);
         String idempotencyKey = UUID.randomUUID().toString();
         
         // 1. Initial Timeout
-        Payment payment = paymentService.processPayment(res.getReservationId(), "cust-1", new BigDecimal("888.00"), idempotencyKey);
+        Payment payment = paymentService.processPayment(res.getReservationId(), customerId, new BigDecimal("888.00"), idempotencyKey);
         assertEquals(PaymentStatus.PENDING, payment.getStatus());
         
         // 2. Gateway status changes to SUCCESS out-of-band
@@ -192,11 +198,12 @@ public class PaymentServiceTest {
 
     @Test
     void testFailedReconciliation() {
-        Reservation res = createReservation();
+        String customerId = UUID.randomUUID().toString();
+        Reservation res = createReservation(customerId);
         String idempotencyKey = UUID.randomUUID().toString();
         
         // 1. Initial Timeout
-        Payment payment = paymentService.processPayment(res.getReservationId(), "cust-1", new BigDecimal("888.00"), idempotencyKey);
+        Payment payment = paymentService.processPayment(res.getReservationId(), customerId, new BigDecimal("888.00"), idempotencyKey);
         assertEquals(PaymentStatus.PENDING, payment.getStatus());
         
         // 2. Gateway status changes to FAILED out-of-band

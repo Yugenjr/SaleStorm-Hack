@@ -9,6 +9,7 @@ import com.salestorm.repository.OrderRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Autowired;
 import jakarta.annotation.PostConstruct;
 
 import java.time.LocalDateTime;
@@ -20,7 +21,12 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 public class OrderService {
 
     private final OrderRepository orderRepository;
-    private final InMemoryEventPublisher eventPublisher;
+    
+    @Autowired(required = false)
+    private InMemoryEventPublisher eventPublisher;
+
+    private final MetricsService metricsService;
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(OrderService.class);
 
     // Simple in-memory queue to demonstrate retry/recovery without a real Message Broker
     private final ConcurrentLinkedQueue<DomainEvent> deadLetterQueue = new ConcurrentLinkedQueue<>();
@@ -28,14 +34,16 @@ public class OrderService {
     // Simulate service failure for testing recovery
     private volatile boolean simulateFailure = false;
 
-    public OrderService(OrderRepository orderRepository, InMemoryEventPublisher eventPublisher) {
+    public OrderService(OrderRepository orderRepository, MetricsService metricsService) {
         this.orderRepository = orderRepository;
-        this.eventPublisher = eventPublisher;
+        this.metricsService = metricsService;
     }
 
     @PostConstruct
     public void init() {
-        eventPublisher.subscribe("PaymentSucceeded", this::handlePaymentSucceeded);
+        if (eventPublisher != null) {
+            eventPublisher.subscribe("PaymentSucceeded", this::handlePaymentSucceeded);
+        }
     }
 
     @Transactional
@@ -65,6 +73,8 @@ public class OrderService {
         
         try {
             order = orderRepository.saveAndFlush(order);
+            metricsService.recordOrderCreated();
+            log.info("Order {} created successfully for payment {}", order.getOrderId(), payment.getPaymentId());
             return order;
         } catch (DataIntegrityViolationException e) {
             // 3. Idempotency Check (Write) - handle concurrent duplicate event insertion
