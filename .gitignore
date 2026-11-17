@@ -1,8 +1,8 @@
-.env
 *.env
 secrets/
 target/
 *.class
 .idea/
 *.iml
-.vscode/
+config.bat
+node_modules
